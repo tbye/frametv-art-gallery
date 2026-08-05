@@ -3,16 +3,32 @@
 // Configure separate backend URL via VITE_API_URL in .env. Otherwise use the page's origin (works when Flask serves frontend from same host).
 const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json();
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 // --- Provider (Immich/other) API ---
 export async function fetchProviderAlbums() {
   const res = await fetch(`${API_BASE}/api/provider/albums`);
-  //if (!res.ok) throw new Error('Failed to fetch provider albums');
-  return (await res.json()).albums;
+  // Not configured — treat as empty so the local gallery still works
+  if (res.status === 404) return [];
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, 'Failed to fetch provider albums'));
+  }
+  const data = await res.json();
+  return data.albums ?? [];
 }
 
 export async function fetchProviderAlbumImages(albumId: string) {
   const res = await fetch(`${API_BASE}/api/provider/albums/${encodeURIComponent(albumId)}/images`);
-  if (!res.ok) throw new Error('Failed to fetch provider album images');
+  if (!res.ok) {
+    throw new Error(await readErrorMessage(res, 'Failed to fetch provider album images'));
+  }
   return (await res.json()).images;
 }
 

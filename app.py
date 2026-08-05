@@ -5,6 +5,12 @@ from pathlib import Path
 import sys
 from flask_sqlalchemy import SQLAlchemy
 from utils.crop_image import crop_image_file, CropImageError, get_preset_crop_box, CROP_PRESETS
+from utils.image_convert import (
+    ImageConvertError,
+    convert_heic_to_png,
+    heic_output_filename,
+    is_heic_filename,
+)
 from samsungtvws.exceptions import HttpApiError, ResponseError
 from const import CONNECTION_NAME
 from typing import Tuple, Optional
@@ -61,7 +67,8 @@ os.makedirs(INSTANCE_FOLDER, exist_ok=True)
 
 frametv_db_path = os.path.abspath(os.path.join(INSTANCE_FOLDER, 'frametv.db'))
 
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+# png/jpg/jpeg are stored as-is; heic/heif are accepted and converted to PNG on upload
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
 
 app = Flask(__name__, static_folder="frontend/build/client")
 app.secret_key = os.environ.get('SECRET_KEY', 'frameartsecretkey')
@@ -377,25 +384,50 @@ def api_delete_album(album_name):
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    """ Upload image to the gallery """
+    """ Upload image to the gallery.
+
+    HEIC/HEIF files are converted to lossless PNG (highest quality format
+    already supported by the gallery and Frame TV art mode).
+    """
     if 'file' not in request.files:
         return {'error': 'No file part'}, 400
     file = request.files['file']
     if file.filename == '':
         return {'error': 'No selected file'}, 400
-    if file and allowed_file(file.filename):
-        try:
-            filename, file_path = _normalized_upload_path(file.filename)
-        except ValueError as e:
-            return {'error': str(e)}, 400
-        file.save(file_path)
-        # Track image in DB
-        img = Image(filename=filename, album_id=None)
-        db.session.add(img)
-        db.session.commit()
-        return {'success': True, 'filename': filename}
-    else:
+    if not (file and allowed_file(file.filename)):
         return {'error': 'Invalid file type'}, 400
+
+    converted_from_heic = is_heic_filename(file.filename)
+    file_path = None
+    try:
+        # HEIC is converted to PNG before storage so browsers and the TV can use it
+        if converted_from_heic:
+            png_name = heic_output_filename(secure_filename(file.filename))
+            filename, file_path = _normalized_upload_path(png_name)
+            convert_heic_to_png(file.stream, file_path)
+        else:
+            filename, file_path = _normalized_upload_path(file.filename)
+            file.save(file_path)
+    except ValueError as e:
+        return {'error': str(e)}, 400
+    except ImageConvertError as e:
+        if file_path and os.path.isfile(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        _log_exception('Failed to convert HEIC upload', e)
+        return {'error': str(e)}, 400
+
+    # Track image in DB
+    img = Image(filename=filename, album_id=None)
+    db.session.add(img)
+    db.session.commit()
+    return {
+        'success': True,
+        'filename': filename,
+        'converted_from_heic': converted_from_heic,
+    }
     
 # --- Play Uploaded Image on TV ---
 @app.route('/api/tv/play_uploaded', methods=['POST'])
@@ -556,9 +588,20 @@ def api_send_to_tv():
         delete_others = False
         if tv and hasattr(tv, 'delete_other_images_on_upload'):
             delete_others = bool(tv.delete_other_images_on_upload)
+        # Preserve aspect ratio by default (letterbox/pillarbox to 16:9) so the
+        # Frame TV does not stretch portrait or non-16:9 photos.
+        preserve_aspect = data.get('preserve_aspect_ratio', True)
+        if isinstance(preserve_aspect, str):
+            preserve_aspect = preserve_aspect.lower() in ('1', 'true', 'yes')
         # upload_artwork should return content_id
         content_id = upload_artwork(
-            ip, art_path, brightness=brightness, display=display, token=token, delete_others=delete_others
+            ip,
+            art_path,
+            brightness=brightness,
+            display=display,
+            token=token,
+            delete_others=delete_others,
+            preserve_aspect_ratio=bool(preserve_aspect),
         )
         # Store UploadedImage record
         image = Image.query.filter_by(filename=filename).first()

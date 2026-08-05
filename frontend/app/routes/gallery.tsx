@@ -65,7 +65,10 @@ export default function Gallery() {
       setProviderImages([]);
       setProviderEnabled(Array.isArray(als) && als.length > 0);
     } catch (e: any) {
-      setError(e.message || "Failed to load provider gallery");
+      // Immich/provider is optional — don't block the local gallery with this error
+      console.warn("Failed to load provider gallery:", e?.message || e);
+      setProviderAlbums([]);
+      setProviderImages([]);
       setProviderEnabled(false);
     } finally {
       setLoading(false);
@@ -239,7 +242,7 @@ export default function Gallery() {
               <form onSubmit={handleUpload} className="flex flex-col gap-2">
                 <input
                   type="file"
-                  accept="image/png,image/jpeg,image/jpg"
+                  accept="image/png,image/jpeg,image/jpg,image/heic,image/heif,.heic,.heif"
                   onChange={e => setUploadFile(e.target.files?.[0] || null)}
                   className="border px-2 py-2 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
                   disabled={uploading}

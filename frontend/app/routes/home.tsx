@@ -130,7 +130,7 @@ export default function Home() {
                 key={idx}
                 src={getUploadUrl(img)}
                 alt={`Artwork ${idx + 1}`}
-                className="w-48 h-32 object-cover rounded-xl shadow-md border border-gray-200"
+                className="w-48 h-32 object-contain bg-gray-100 rounded-xl shadow-md border border-gray-200"
               />
             ))}
           </div>

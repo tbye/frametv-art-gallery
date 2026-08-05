@@ -106,10 +106,16 @@ def upload_artwork(
     delete_others: bool = False,
     token: Optional[str] = None,
     matte: Optional[str] = "none",
+    preserve_aspect_ratio: bool = True,
     **kwargs
 ) -> Optional[str]:
     """
     Upload an artwork image to the Frame TV, optionally set brightness, and display it.
+
+    By default, non-16:9 images are letterboxed/pillarboxed onto a 4K 16:9 canvas
+    before upload. Frame TVs stretch mismatched aspect ratios to fill the screen;
+    padding prevents that distortion. The original gallery file is never modified.
+
     Args:
         ip (str): IP address of the TV.
         art_path (str): Path to the artwork image file.
@@ -118,35 +124,71 @@ def upload_artwork(
         delete_others (bool): Whether to delete other artworks (not implemented).
         token (Optional[str]): Token string to use for authentication.
         matte (Optional[str]): Matte/frame style to use (e.g., 'shadowbox_polar', 'shadowbox_modern', 'none' (no matte)).
+        preserve_aspect_ratio (bool): If True (default), pad to 16:9 before upload.
     Returns:
         Optional[str]: Content ID of the uploaded image, or None if failed.
     """
-    tv = SamsungTVWS(host=ip, port=DEFAULT_PORT, token=token, name=CONNECTION_NAME)
-    tv.open()
-    upload_kwargs = {}
-    available_mattes = get_available_mattes(ip, token)
-    if matte is not None:
-        # Validate matte against available options
-        if available_mattes and 'matte_types' in available_mattes:
-            matte_types = available_mattes['matte_types']
-            # Extract matte_type values from the list of dicts
-            available_matte_names = [m.get('matte_type') for m in matte_types if isinstance(m, dict)]
-            if matte not in available_matte_names:
-                logger.warning("Requested matte '%s' not in available mattes: %s", matte, available_matte_names)
-        upload_kwargs['matte'] = matte
-        upload_kwargs['portrait_matte'] = matte
-    with open(art_path, "rb") as f:
-        content_id = tv.art().upload(f.read(), **upload_kwargs)
-    if brightness is not None:
-        tv.art().set_brightness(brightness)
-    if display and content_id:
-        tv.art().select_image(content_id, show=True)
-    tv.close()
+    import tempfile
+    from utils.image_convert import fit_image_to_canvas, needs_aspect_padding
 
-    if delete_others:
-        _delete_other_images(tv.art(), content_id, debug=True)
+    upload_path = art_path
+    temp_path = None
+    if preserve_aspect_ratio and needs_aspect_padding(art_path):
+        fd, temp_path = tempfile.mkstemp(suffix=".jpg", prefix="frametv_art_")
+        os.close(fd)
+        try:
+            fitted_w, fitted_h = fit_image_to_canvas(art_path, temp_path)
+            logger.info(
+                "Padded image for TV upload (content %dx%d on 16:9 canvas): %s",
+                fitted_w,
+                fitted_h,
+                art_path,
+            )
+            upload_path = temp_path
+        except Exception:
+            # Fall back to original if preparation fails rather than blocking upload
+            logger.exception("Aspect-ratio pad failed; uploading original image")
+            if temp_path and os.path.isfile(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            temp_path = None
+            upload_path = art_path
 
-    return content_id
+    try:
+        tv = SamsungTVWS(host=ip, port=DEFAULT_PORT, token=token, name=CONNECTION_NAME)
+        tv.open()
+        upload_kwargs = {}
+        available_mattes = get_available_mattes(ip, token)
+        if matte is not None:
+            # Validate matte against available options
+            if available_mattes and 'matte_types' in available_mattes:
+                matte_types = available_mattes['matte_types']
+                # Extract matte_type values from the list of dicts
+                available_matte_names = [m.get('matte_type') for m in matte_types if isinstance(m, dict)]
+                if matte not in available_matte_names:
+                    logger.warning("Requested matte '%s' not in available mattes: %s", matte, available_matte_names)
+            upload_kwargs['matte'] = matte
+            upload_kwargs['portrait_matte'] = matte
+        with open(upload_path, "rb") as f:
+            content_id = tv.art().upload(f.read(), **upload_kwargs)
+        if brightness is not None:
+            tv.art().set_brightness(brightness)
+        if display and content_id:
+            tv.art().select_image(content_id, show=True)
+        tv.close()
+
+        if delete_others:
+            _delete_other_images(tv.art(), content_id, debug=True)
+
+        return content_id
+    finally:
+        if temp_path and os.path.isfile(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 def _delete_other_images(art, keep_content_id: str, *, debug: bool) -> None:
     try:

@@ -13,22 +13,35 @@ class ImmichProvider(MediaProvider):
         self.api_key = api_key
         self.host = host
         self.port = port
+        # Default SSL for 443; typical Immich (2283) and custom HTTP ports use plain HTTP.
+        self.use_ssl = port == 443
 
     async def _get_client(self):
         session = aiohttp.ClientSession()
-        return Immich(session, self.api_key, self.host, port=self.port), session
+        immich = Immich(
+            session,
+            self.api_key,
+            self.host,
+            port=self.port,
+            use_ssl=self.use_ssl,
+        )
+        # aioimmich >=0.16 requires async_setup before any API calls
+        await immich.async_setup()
+        return immich, session
 
     async def get_albums(self) -> List[Dict]:
         immich, session = await self._get_client()
-        albums = await immich.albums.async_get_all_albums()
-        await session.close()
-        return [
-            {
-                "id": album.album_id,
-                "name": album.album_name,
-                "asset_count": album.asset_count
-            } for album in albums
-        ]
+        try:
+            albums = await immich.albums.async_get_all_albums()
+            return [
+                {
+                    "id": album.album_id,
+                    "name": album.album_name,
+                    "asset_count": album.asset_count
+                } for album in albums
+            ]
+        finally:
+            await session.close()
 
     def download_image(self, url: str, dest_path: str):
         """Download an image from a direct Immich asset URL and save to dest_path."""
@@ -42,42 +55,56 @@ class ImmichProvider(MediaProvider):
     async def download_image_by_id(self, image_id: str, dest_path: str, size: str = "fullsize"):
         """Download an image by Immich asset ID and save to dest_path using aioimmich."""
         immich, session = await self._get_client()
-        asset_bytes = await immich.assets.async_view_asset(image_id, size=size)
-        await session.close()
-        async with aiofiles.open(dest_path, "wb") as f:
-            await f.write(asset_bytes)
-            logger.info("download complete")
+        try:
+            asset_bytes = await immich.assets.async_view_asset(image_id, size=size)
+            async with aiofiles.open(dest_path, "wb") as f:
+                await f.write(asset_bytes)
+                logger.info("download complete")
+        finally:
+            await session.close()
 
     def download_image_by_id_sync(self, image_id: str, dest_path: str, size: str = "fullsize"):
         """Sync wrapper for download_image_by_id for use in sync code."""
-        import asyncio
         asyncio.run(self.download_image_by_id(image_id, dest_path, size))
 
     async def get_album_images(self, album_id: str) -> List[Dict]:
         immich, session = await self._get_client()
-        album = await immich.albums.async_get_album_info(album_id, without_assests=False)
-        await session.close()
-        return [
-            {
-            "id": asset.asset_id,
-            "filename": asset.original_file_name,
-            "thumbhash": asset.thumbhash,
-            "has_metadata": asset.has_metadata
-            } for asset in album.assets
-        ]
+        try:
+            # ImmichAlbum no longer embeds assets; use search by album id
+            assets = await immich.search.async_get_all_by_album_ids([album_id])
+            return [
+                {
+                    "id": asset.asset_id,
+                    "filename": asset.original_file_name,
+                    "thumbhash": asset.thumbhash,
+                    "has_metadata": asset.has_metadata,
+                }
+                for asset in assets
+            ]
+        finally:
+            await session.close()
 
     async def stream_image(self, image_id: str, size: str = "fullsize") -> Optional[bytes]:
         allowed_sizes = {"original", "fullsize", "preview", "thumbnail"}
         # Validate size, fallback to 'fullsize' if invalid
         if size not in allowed_sizes:
             size = "fullsize"
+        # "original" is not supported by async_view_asset; map to fullsize
+        if size == "original":
+            size = "fullsize"
         immich, session = await self._get_client()
-        asset_bytes = await immich.assets.async_view_asset(image_id, size=size)
-        await session.close()
-        return asset_bytes
+        try:
+            return await immich.assets.async_view_asset(image_id, size=size)
+        finally:
+            await session.close()
 
     async def get_image_metadata(self, image_id: str) -> Dict:
         immich, session = await self._get_client()
-        asset = await immich.assets.async_get_asset(image_id)
-        await session.close()
-        return asset.metadata
+        try:
+            # async_get_asset was removed; fetch asset details via the raw API
+            asset = await immich.api.async_do_request(f"assets/{image_id}")
+            if not isinstance(asset, dict):
+                return {}
+            return asset.get("exifInfo") or asset
+        finally:
+            await session.close()

@@ -1,6 +1,24 @@
 import { ArrowUpTrayIcon } from "@heroicons/react/24/outline";
 import React, { useState } from "react";
 
+// HEIC often has an empty MIME type in Chromium; match by extension too.
+const ACCEPTED_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".heic", ".heif"];
+
+function isAcceptedImageFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  const name = file.name.toLowerCase();
+  return ACCEPTED_IMAGE_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+function isAcceptedImageItem(item: DataTransferItem): boolean {
+  if (item.kind !== "file") return false;
+  if (item.type.startsWith("image/") || item.type === "image/heic" || item.type === "image/heif") {
+    return true;
+  }
+  // type may be empty for HEIC — allow generic files; drop handler re-filters
+  return !item.type || item.type === "application/octet-stream";
+}
+
 type ImageDropZoneProps = {
   children: React.ReactNode;
   className?: string;
@@ -33,7 +51,7 @@ export default function ImageDropZone({
     if (items && items.length > 0) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        if (item.kind === "file" && item.type.startsWith("image/")) {
+        if (isAcceptedImageItem(item)) {
           hasImages = true;
           break;
         }
@@ -77,9 +95,7 @@ export default function ImageDropZone({
 
     if (disabled) return;
 
-    const files = Array.from(e.dataTransfer.files || []).filter((file) =>
-      file.type.startsWith("image/")
-    );
+    const files = Array.from(e.dataTransfer.files || []).filter(isAcceptedImageFile);
 
     if (files.length === 0) return;
     await onFilesDropped(files);

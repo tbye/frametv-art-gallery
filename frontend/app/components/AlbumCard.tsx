@@ -46,7 +46,7 @@ export default function AlbumCard({
               key={img}
               src={getUploadUrl(img)}
               alt={img}
-              className="w-16 h-16 object-cover rounded border"
+              className="w-16 h-16 object-contain bg-gray-100 rounded border"
               onClick={(event) => {
                 event.stopPropagation();
                 onImageClick({ id: img, filename: img, type: 'local' });

@@ -1,4 +1,21 @@
-# ---------- Builder ----------
+# ---------- Frontend ----------
+FROM node:20-slim AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+# package.json pins @react-router/serve@8 while the rest of the stack is 7.x
+RUN npm ci --legacy-peer-deps
+
+COPY frontend/ ./
+
+ARG VITE_APP_VERSION=dev
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+
+RUN npm run build
+
+
+# ---------- Python builder ----------
 FROM python:3.13-slim AS builder
 
 # Install git only for dependency build
@@ -26,6 +43,9 @@ COPY --from=builder /install /usr/local
 
 # Copy app code
 COPY . .
+
+# Overlay production frontend build (Flask serves frontend/build/client)
+COPY --from=frontend /frontend/build ./frontend/build
 
 ENV PYTHONUNBUFFERED=1
 

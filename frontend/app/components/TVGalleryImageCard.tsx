@@ -39,7 +39,7 @@ export default function TVGalleryImageCard({ image, selectedTvIp, onPlay, onDele
               : getTvGalleryThumbnailUrl(selectedTvIp, image.content_id)
           }
           alt={image.filename}
-          className="h-full w-full object-cover"
+          className="h-full w-full object-contain"
           style={{ display: imgLoaded && !imgError ? "block" : "none" }}
           onLoad={() => setImgLoaded(true)}
           onError={(event) => {

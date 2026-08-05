@@ -1,6 +1,7 @@
 services:
   frametv:
-    image: ghcr.io/mrtncode/frametv-art-gallery:latest
+    build: .
+    image: frametv-art-gallery:local
     container_name: frametv_artgallery
     restart: always
     ports:
