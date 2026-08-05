@@ -52,7 +52,7 @@ This fork ([tbye/frametv-art-gallery](https://github.com/tbye/frametv-art-galler
 ### Docker: build the frontend in the image
 Local `docker compose build` previously produced a working API but **404 on `/`**, because the Dockerfile never built the React app. Official CI builds the UI *before* `docker build`; a plain local build did not.
 
-- Multi-stage `Dockerfile`: **pnpm** installs the latest stable Node (**LTS** via `pnpm runtime set node lts`); project deps still use **npm** + `package-lock.json` (`npm ci` + `npm run build`)
+- Multi-stage `Dockerfile` builds the React frontend inside the image (latest Node LTS, then `npm ci` + `npm run build`)
 - Runtime image overlays `frontend/build` so Flask can serve the SPA from `frontend/build/client`
 - `docker-compose.yml` uses `build: .` and image tag `frametv-art-gallery:local`
 - Host `frontend/build/` is ignored via `.dockerignore` so only the image-built UI is used
