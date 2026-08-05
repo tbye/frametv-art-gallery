@@ -45,7 +45,52 @@ You can use any kind of image! Either upload your own personal photos or import 
 </p>
 Example images from https://pixabay.com/
 
+## tbye's changes
+
+This fork ([tbye/frametv-art-gallery](https://github.com/tbye/frametv-art-gallery)) includes practical fixes and add-ons found while running the app against Immich and a local Docker setup. Upstream project: [mrtncode/frametv-art-gallery](https://github.com/mrtncode/frametv-art-gallery).
+
+### Docker: build the frontend in the image
+Local `docker compose build` previously produced a working API but **404 on `/`**, because the Dockerfile never built the React app. Official CI builds the UI *before* `docker build`; a plain local build did not.
+
+- Multi-stage `Dockerfile` with a **Node 20** stage (`npm ci` + `npm run build`)
+- Runtime image overlays `frontend/build` so Flask can serve the SPA from `frontend/build/client`
+- `docker-compose.yml` uses `build: .` and image tag `frametv-art-gallery:local`
+- Host `frontend/build/` is ignored via `.dockerignore` so only the image-built UI is used
+
+### Immich / external provider
+Gallery load called `/api/provider/albums` on every visit. With Immich enabled, that path crashed and returned HTML 500s, which the frontend tried to parse as JSON (`Unexpected token '<'...`).
+
+- Updated `ImmichProvider` for **aioimmich ≥ 0.16** (`async_setup()`, album images via search API, safer session cleanup)
+- Provider API errors now return **JSON** (e.g. 502) instead of Flask HTML error pages
+- Immich is treated as **optional** in the gallery UI: provider failures no longer block the local gallery or show a red error under the upload form
+
+### HEIC / HEIF uploads
+Phone photos are often HEIC. The app only accepted PNG/JPEG, and browsers don’t reliably display HEIC.
+
+- Accepts `.heic` / `.heif` uploads
+- Converts them server-side to **lossless PNG** (best quality among formats already supported by the gallery and Frame TV art mode)
+- Applies EXIF orientation so phone photos aren’t rotated wrong
+- Adds `pillow-heif` dependency; UI file picker and drop zone accept HEIC (including empty MIME types in Chromium)
+
+### Frame TV aspect ratio
+Non‑16:9 images (especially portraits) were **stretched** on the TV. Frame art mode fills 16:9 and distorts anything else.
+
+- On **Upload to TV**, non‑16:9 images are letterboxed/pillarboxed onto a **3840×2160** canvas (black bars, aspect preserved)
+- Gallery originals are **not** modified—only the TV upload is padded
+- Already 16:9 images skip padding
+- Optional override: `"preserve_aspect_ratio": false` on `/api/tv/send`
+- UI thumbnails use `object-contain` more consistently so previews don’t crop awkwardly
+
+### Quick local run (this fork)
+
+```bash
+docker compose build
+docker compose up -d
+# open http://localhost:8000
+```
+
 # Installation
+
 
 ## Docker
 docker volume create frametv_uploads
