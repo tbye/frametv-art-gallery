@@ -1,5 +1,28 @@
 # ---------- Frontend ----------
-FROM node:20-slim AS frontend
+# Bootstrap with a minimal image; pnpm installs the latest stable (LTS) Node runtime.
+# Project deps still use npm + package-lock.json (existing package management).
+FROM debian:bookworm-slim AS frontend
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        # Required by the standalone pnpm binary
+        libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Standalone pnpm (does not require Node preinstalled)
+ENV PNPM_HOME=/pnpm
+# Installer places the CLI in $PNPM_HOME/bin
+ENV PATH=$PNPM_HOME/bin:$PATH
+RUN curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash PNPM_HOME=$PNPM_HOME sh - \
+    && pnpm --version
+
+# Latest stable Node = Active LTS via pnpm runtime (`pnpm env` is deprecated)
+# pnpm v11+ does not ship npm with the Node runtime — install npm separately.
+RUN pnpm runtime set node lts -g \
+    && pnpm add -g npm \
+    && node --version \
+    && npm --version
 
 WORKDIR /frontend
 

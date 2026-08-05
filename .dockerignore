@@ -21,6 +21,7 @@ instance/
 # Node / Frontend (built in Docker frontend stage; host artifacts not needed)
 frontend/node_modules/
 frontend/build/
+frontend/.pnpm-store/
 frontend/.react-router
 frontend/README.md
 
