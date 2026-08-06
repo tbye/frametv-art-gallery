@@ -5,7 +5,7 @@ services:
     container_name: frametv_artgallery
     restart: always
     ports:
-      - "8888:8000"
+      - "8999:8000"
     volumes:
       - frametv_data:/data
     environment:
